@@ -3,7 +3,7 @@
 
 ```powershell
 python run.py \
-  --url https://nanoscience.oxinst.com \
+  --url https://google.com \
   --filter-url /assets/uploads/ \
   --download \
   --max-pages 300 \
