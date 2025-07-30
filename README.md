@@ -7,7 +7,7 @@ python run.py \
   --filter-url /assets/uploads/ \
   --download \
   --max-pages 300 \
-  --export html \
+  --export xml json csv html(default) \
   --pattern Optistat \
   --content
 ```
