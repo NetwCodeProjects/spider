@@ -1,12 +1,18 @@
 # spidercore/spiders/basic.py
 
-import scrapy
-from scrapy import signals
-from urllib.parse import urlparse
 import re
 import os
-from pathlib import Path
+import csv
+import json
+import html
 import hashlib
+import scrapy
+from pathlib import Path
+from scrapy import signals
+from datetime import datetime
+from urllib.parse import urlparse
+from collections import defaultdict
+from urllib.parse import urlparse
 
 class BasicSpider(scrapy.Spider):
     name = "basic"
@@ -141,28 +147,229 @@ class BasicSpider(scrapy.Spider):
 
         if self.export == "html":
             self.write_html_sitemap()
+        elif self.export == "xml":
+            self.write_xml_sitemap()
+        elif self.export == "json":
+            self.write_json_sitemap()
+        elif self.export == "csv":
+            self.write_csv_sitemap()
+        else:
+            self.logger.warning(f"[!] Unsupported export format: {self.export}")
 
         if not self._crawl_logged:
             self._crawl_logged = True
             self.logger.info(f"[✓] Crawl complete: {len(self.visited_urls)} pages")
 
-
     def write_html_sitemap(self):
+        from collections import defaultdict
+        import datetime
+        from urllib.parse import urlparse
+
+        def build_tree(entries):
+            tree = {}
+            for entry in entries:
+                parsed = urlparse(entry["url"])
+                path = parsed.path
+
+                # Group root-level URLs like "/" and "/foo.html" under "/"
+                if not path or path == "/" or path.count("/") == 1:
+                    node = tree.setdefault("/", {})
+                    node.setdefault("__pages__", []).append(entry)
+                    continue
+
+                # Split deeper paths and build nested structure
+                parts = [p for p in path.strip("/").split("/") if p]
+                node = tree
+                for i, part in enumerate(parts):
+                    is_leaf = i == len(parts) - 1
+                    if is_leaf and '.' in part: # Don't create children for files like .html
+                        node.setdefault("__pages__", []).append(entry)
+                        break
+                    node = node.setdefault(part, {})
+                else:
+                    node.setdefault("__pages__", []).append(entry)
+            return tree
+
+
+        def render_list(tree, level=0):
+            html = ""
+            for key, subtree in tree.items():
+                if key == "__pages__":
+                    pages = subtree
+                    for i, entry in enumerate(pages):
+                        last = " last-page" if i == len(pages) - 1 else ""
+                        title = entry["title"].replace('"', "&quot;") if entry["title"] else entry["url"]
+                        html += f'<li class="lpage{last}"><a href="{entry["url"]}" title="{title}">{title}</a></li>\n'
+                    continue
+
+                count = count_leaf_pages(subtree)
+                html += f'<li class="lhead">{key}/  <span class="lcount">{count} pages</span></li>\n'
+                html += f'<li><ul class="level-{level+1}">\n'
+                html += render_list(subtree, level + 1)
+                html += "</ul></li>\n"
+            return html
+
+        def count_leaf_pages(subtree):
+            count = 0
+            for k, v in subtree.items():
+                if k == "__pages__":
+                    count += len(v)
+                else:
+                    count += count_leaf_pages(v)
+            return count
+
         if self._html_sitemap_written:
             return
         self._html_sitemap_written = True
+
+        tree = build_tree(self.page_data)
+        now = datetime.datetime.utcnow().strftime("%Y, %B %d")
+
         try:
             with open(self.output_file, "w", encoding="utf-8") as f:
-                f.write(f"<html><head><title>Sitemap for {self.domain}</title></head><body>\n")
-                f.write(f"<h1>Sitemap for {self.domain}</h1>\n")
-                f.write(f"<p>Total pages: {len(self.page_data)}</p>\n")
-                f.write("<ul>\n")
-                for entry in self.page_data:
-                    f.write(f'<li><a href="{entry["url"]}">{entry["url"]}</a>')
-                    if self.include_content and entry["title"]:
-                        f.write(f" — {entry['title']}")
-                    f.write("</li>\n")
-                f.write("</ul></body></html>\n")
+                f.write(f"""<!DOCTYPE html>
+                <html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+                <title>{self.domain} Site Map</title>
+                <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" name="viewport">
+                <style type="text/css">
+                body {{
+                    background-color: #fff;
+                    font-family: "Roboto", "Helvetica", "Arial", sans-serif;
+                    margin: 0;
+                }}
+
+                #top {{
+                    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+                    color: #fff;
+                    text-align: center;
+                    padding: 40px 20px 60px;
+                    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+                    border-bottom-left-radius: 8px;
+                    border-bottom-right-radius: 8px;
+                }}
+
+                .header-wrapper {{
+                    max-width: 700px;
+                    margin: auto;
+                }}
+
+                .site-title {{
+                    font-size: 32px;
+                    font-weight: bold;
+                    margin: 0 0 10px;
+                    letter-spacing: 0.5px;
+                }}
+
+                .meta {{
+                    font-size: 16px;
+                    margin-bottom: 20px;
+                }}
+
+                .meta span {{
+                    display: block;
+                    margin: 4px 0;
+                }}
+
+                .homepage-button {{
+                    display: inline-block;
+                    margin-top: 10px;
+                    background-color: #ffffff;
+                    color: #4facfe;
+                    padding: 10px 20px;
+                    border-radius: 25px;
+                    text-decoration: none;
+                    font-weight: bold;
+                    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+                    transition: all 0.3s ease;
+                }}
+
+                .homepage-button:hover {{
+                    background-color: #e8f6ff;
+                    color: #007acc;
+                    box-shadow: 0 6px 14px rgba(0,0,0,0.2);
+                }}
+
+                #cont {{
+                    position: relative;
+                    border-radius: 6px;
+                    box-shadow: 0 16px 24px 2px rgba(0, 0, 0, 0.14), 0 6px 30px 5px rgba(0, 0, 0, 0.12), 0 8px 10px -5px rgba(0, 0, 0, 0.2);
+                    background: #f3f3f3;
+                    margin: -20px 30px 0px 30px;
+                    padding: 20px;
+                }}
+
+                a:link, a:visited {{ color: #0180AF; text-decoration: underline; }}
+                a:hover {{ color: #666; }}
+                #footer {{ padding: 10px; text-align: center; }}
+                ul {{ margin: 0px; padding: 0px; list-style: none; }}
+                li {{ margin: 0px; }}
+                li ul {{ margin-left: 20px; }}
+                .lhead {{ background: #ddd; padding: 10px; margin: 10px 0px; }}
+                .lcount {{ padding: 0px 10px; }}
+                .lpage {{ border-bottom: #ddd 1px solid; padding: 5px; }}
+                .last-page {{ border: none; }}
+                </style>
+                </head>
+                <body>
+                <div id="top">
+                    <div class="header-wrapper">
+                        <h1 class="site-title">{self.domain} Site Map</h1>
+                        <div class="meta">
+                            <span>Last updated: {now}</span>
+                            <span>Total pages: {len(self.page_data)}</span>
+                        </div>
+                        <a class="homepage-button" href="{self.start_url}" target="_blank">Go to Target Site</a>
+                    </div>
+                </div>
+                <div id="cont">
+                <ul class="level-0">
+                """)
+
+                f.write(render_list(tree))
+                f.write("</ul></div></body></html>\n")
             self.logger.info(f"[✓] HTML sitemap written to: {self.output_file}")
         except Exception as e:
             self.logger.error(f"[!] Failed to write HTML sitemap: {e}")
+    
+    def write_xml_sitemap(self):
+        try:
+            now = datetime.utcnow().replace(microsecond=0).isoformat() + "+00:00"
+            with open(self.output_file, "w", encoding="utf-8") as f:
+                f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
+                f.write('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n')
+
+                for entry in self.page_data:
+                    url = html.escape(entry["url"])
+                    f.write("  <url>\n")
+                    f.write(f"    <loc>{url}</loc>\n")
+                    f.write(f"    <lastmod>{now}</lastmod>\n")
+                    f.write("    <priority>0.80</priority>\n")
+                    f.write("  </url>\n")
+
+                f.write("</urlset>\n")
+            self.logger.info(f"[✓] XML sitemap written to: {self.output_file}")
+        except Exception as e:
+            self.logger.error(f"[!] Failed to write XML sitemap: {e}")
+
+    def write_json_sitemap(self):
+        try:
+            with open(self.output_file, "w", encoding="utf-8") as f:
+                json.dump(self.page_data, f, indent=2, ensure_ascii=False)
+            self.logger.info(f"[✓] JSON sitemap written to: {self.output_file}")
+        except Exception as e:
+            self.logger.error(f"[!] Failed to write JSON sitemap: {e}")
+
+    def write_csv_sitemap(self):
+        try:
+            with open(self.output_file, "w", encoding="utf-8", newline="") as f:
+                writer = csv.writer(f)
+                header = ["url", "title"] if self.include_content else ["url"]
+                writer.writerow(header)
+                for entry in self.page_data:
+                    if self.include_content:
+                        writer.writerow([entry["url"], entry.get("title", "")])
+                    else:
+                        writer.writerow([entry["url"]])
+            self.logger.info(f"[✓] CSV sitemap written to: {self.output_file}")
+        except Exception as e:
+            self.logger.error(f"[!] Failed to write CSV sitemap: {e}")
