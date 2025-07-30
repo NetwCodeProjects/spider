@@ -1,4 +1,4 @@
-# nanositemap/spiders/basic.py
+# spidercore/spiders/basic.py
 
 import scrapy
 from scrapy import signals
@@ -29,6 +29,8 @@ class BasicSpider(scrapy.Spider):
             url = "https://" + url  # default to HTTPS if missing
 
         parsed = urlparse(url)
+        self._html_sitemap_written = False
+        self._crawl_logged = False
         self.domain = parsed.netloc
         self.allowed_domains = [self.domain]
         self.start_urls = [url]
@@ -140,9 +142,15 @@ class BasicSpider(scrapy.Spider):
         if self.export == "html":
             self.write_html_sitemap()
 
-        self.logger.info(f"[✓] Crawl complete: {len(self.visited_urls)} pages")
+        if not self._crawl_logged:
+            self._crawl_logged = True
+            self.logger.info(f"[✓] Crawl complete: {len(self.visited_urls)} pages")
+
 
     def write_html_sitemap(self):
+        if self._html_sitemap_written:
+            return
+        self._html_sitemap_written = True
         try:
             with open(self.output_file, "w", encoding="utf-8") as f:
                 f.write(f"<html><head><title>Sitemap for {self.domain}</title></head><body>\n")
